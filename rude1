@@ -1,0 +1,346 @@
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Scanner;
+import java.io.*;
+
+/**
+ * This class establishes a connection to the test DB server, creates necessary
+ * tables and executes queries against them.
+ * 
+ * @author zfac020
+ */
+public class zfac020 {
+	/**
+	 * Entry point to the program.
+	 * 
+	 * @param args - cmd arguments passed to the program
+	 */
+	public static void main(String[] args) {
+		// Check if files exist in the same directory if not exit
+		if (!fileExists("./TopURLs") || !fileExists("./mapping")) {
+			System.out.println("Required file(s) not found! Exiting...");
+			return;
+		}
+
+		// Read the files into a list of String arrays
+		List<String[]> topURLsList = fileToList("./TopURLs");
+		List<String[]> mappingList = fileToList("./mapping");
+
+		// Ask the user for credentials
+		Scanner input = new Scanner(System.in);
+		System.out.print("Enter your username: ");
+		String user = input.nextLine();// "zfac020";
+		System.out.print("Enter your password: ");
+		String password = input.nextLine();// "78133";
+		input.close();
+
+		// Attempt to establish conenction
+		Connection connection = connectToDatabase(user, password);
+		if (connection != null) {
+			System.out.println("Connection to " + user + " established.");
+		} else {
+			System.out.println("Failed to make connection to " + user + ". Exiting...");
+			return;
+		}
+
+		// Drop tables if they already exist
+		dropTable(connection, "topURLs");
+		dropTable(connection, "domainDesc");
+
+		// Create/Re-create tables
+		createTable(connection,
+				"topURLs(position int NOT NULL, domain text NOT NULL, tldPart1 text NOT NULL, tldPart2 text, tldLast text NOT NULL, PRIMARY KEY (position))");
+		createTable(connection, "domainDesc(tld text NOT NULL, description text, PRIMARY KEY (tld))");
+
+		// Upload data to newly created tables
+		uploadList(connection, "topURLs", /* columNumber */5, topURLsList);
+		uploadList(connection, "domainDesc", /* columNumber */2, mappingList);
+
+		// Execute requested queries
+		firstQuery(connection);
+		secondQuery(connection);
+		thirdQuery(connection);
+		fourthQuery(connection);
+	}
+
+	/**
+	 * This function attempts to connect a user to the Database server.
+	 * 
+	 * @param user     - the user that need to be logged in to the server.
+	 * @param password - the password needed to authenticate above user.
+	 * @return the connection object if successful, null otherwise.
+	 */
+	public static Connection connectToDatabase(String user, String password) {
+		Connection connection = null;
+		try {
+			connection = DriverManager.getConnection("jdbc:postgresql://10.206.1.13/CS2855/" + user, user, password);
+		} catch (SQLException e) {
+			System.out.println("Connection Failed! Check output console");
+			e.printStackTrace();
+			System.exit(-1);
+		}
+		return connection;
+	}
+
+	/**
+	 * Checks if a file at the given path exists.
+	 * 
+	 * @param path - the path to the file
+	 * @return false if files does not exist, true otherwise.
+	 */
+	public static boolean fileExists(String path) {
+		File f = new File(path);
+
+		if (!f.exists()) {
+			System.out.println(path + " file not found!");
+			return false;
+		}
+
+		return true;
+	}
+
+	/**
+	 * This function drops a DB table if it already exists.
+	 * 
+	 * @param con       - the connection through which commands will be executed.
+	 * @param tableName - the name of the table to be dropped.
+	 */
+	public static void dropTable(Connection con, String tableName) {
+		try {
+			Statement st = con.createStatement();
+			st.execute("DROP TABLE IF EXISTS " + tableName);
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error dropping table " + tableName);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * This function creates a table with the specified description.
+	 * 
+	 * @param con              - the connection through which commands will be
+	 *                         executed.
+	 * @param tableDescription - the SQL table description
+	 */
+	public static void createTable(Connection con, String tableDescription) {
+		try {
+			Statement st = con.createStatement();
+			st.execute("CREATE TABLE " + tableDescription);
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error with " + tableDescription);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * This function uploads a list of String arrays to a database table, based on
+	 * it's arguments.
+	 * 
+	 * @param con          - the connection through which commands will be executed.
+	 * @param tableName    - to which table the data to be uploaded to.
+	 * @param columnNumber - how many columns does said table have.
+	 * @param list         - the data to be uploaded.
+	 */
+	public static void uploadList(Connection con, String tableName, int columnNumber, List<String[]> list) {
+		String SQL = "INSERT INTO " + tableName + " VALUES(";
+
+		for (int i = 0; i < columnNumber; ++i) {
+			SQL += "?";
+
+			if (i != columnNumber - 1) {
+				SQL += ",";
+			} else {
+				SQL += ");";
+			}
+		}
+
+		try (PreparedStatement statement = con.prepareStatement(SQL);) {
+			int count = 0;
+			for (String[] arr : list) {
+				if (tableName.equals("topURLs")) {
+					statement.setInt(1, Integer.parseInt(arr[0]));
+					statement.setString(2, arr[1]);
+					statement.setString(3, arr[2]);
+
+					if (arr.length == 3) {
+						statement.setString(4, null);
+						statement.setString(5, arr[2]);
+					} else {
+						statement.setString(4, arr[3]);
+						statement.setString(5, arr[3]);
+					}
+				} else if (tableName.equals("domainDesc")) {
+					statement.setString(1, arr[0]);
+					statement.setString(2, arr[1]);
+				} else {
+					System.out.println(tableName + " does not exist!");
+				}
+
+				statement.addBatch();
+				count++;
+
+				// execute every 100 rows or less
+				if (count % 100 == 0 || count == list.size()) {
+					statement.executeBatch();
+				}
+			}
+		} catch (SQLException ex) {
+			System.out.println(ex.getMessage());
+		}
+
+		System.out.println("List uploaded to: " + tableName);
+	}
+
+	/**
+	 * This function reads a file into memory, in a list of arrays of strings.
+	 * 
+	 * @param path - the path of the file to read.
+	 * @return the list of arrays of strings.
+	 */
+	public static List<String[]> fileToList(String path) {
+		List<String[]> list = new ArrayList<>();
+		BufferedReader br = null;
+
+		try {
+			br = new BufferedReader(new FileReader(path));
+
+			String line;
+			while ((line = br.readLine()) != null) {
+				String[] split = line.split("\\t");
+
+				list.add(split);
+			}
+
+			if (br != null) {
+				br.close();
+			}
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+
+		return list;
+	}
+
+	/**
+	 * The first query to be executed.
+	 * 
+	 * @param con - the connection through which commands will be executed.
+	 */
+	public static void firstQuery(Connection con) {
+		System.out.println("################# 1st Query ################");
+
+		String SQL = "SELECT * FROM topURLs ORDER BY position ASC LIMIT 10;";
+
+		try {
+			Statement st = con.createStatement();
+			ResultSet rs = st.executeQuery(SQL);
+
+			printResultSet(rs);
+
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error executing " + SQL);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * The second query to be executed.
+	 * 
+	 * @param con - the connection through which commands will be executed.
+	 */
+	public static void secondQuery(Connection con) {
+		System.out.println("################# 2nd Query ################");
+
+		String SQL = "SELECT tldPart1, tldPart2 FROM (SELECT tldPart1, tldPart2, min(position) AS position FROM topURLs GROUP BY tldPart1, tldPart2) foo ORDER BY position LIMIT 10";
+
+		try {
+			Statement st = con.createStatement();
+			ResultSet rs = st.executeQuery(SQL);
+
+			printResultSet(rs);
+
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error executing " + SQL);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * The third query to be executed.
+	 * 
+	 * @param con - the connection through which commands will be executed.
+	 */
+	public static void thirdQuery(Connection con) {
+		System.out.println("################# 3rd Query ################");
+
+		String SQL = "SELECT description FROM (SELECT tldLast, min(position) AS position FROM topURLs GROUP BY tldLast) foo JOIN domainDesc ON tldLast=tld ORDER BY position LIMIT 10";
+
+		try {
+			Statement st = con.createStatement();
+			ResultSet rs = st.executeQuery(SQL);
+
+			printResultSet(rs);
+
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error executing " + SQL);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * The fourth query to be executed.
+	 * 
+	 * @param con - the connection through which commands will be executed.
+	 */
+	public static void fourthQuery(Connection con) {
+		System.out.println("################# 4th Query ################");
+
+		String SQL = "SELECT domain FROM (SELECT DISTINCT ON (domain) domain, min(position) AS position FROM topURLs GROUP BY domain HAVING COUNT(*) > 1) foo ORDER BY position LIMIT 10;";
+
+		try {
+			Statement st = con.createStatement();
+			ResultSet rs = st.executeQuery(SQL);
+
+			printResultSet(rs);
+
+			st.close();
+		} catch (SQLException e) {
+			System.out.println("Error executing " + SQL);
+			e.printStackTrace();
+		}
+	}
+
+	/**
+	 * This function neatly prints a result set from a SQL query.
+	 * 
+	 * @param rs - the result set to print to stdout.
+	 */
+	public static void printResultSet(ResultSet rs) {
+		try {
+			ResultSetMetaData rsmd = rs.getMetaData();
+			int columnsNumber = rsmd.getColumnCount();
+			while (rs.next()) {
+				for (int i = 1; i <= columnsNumber; i++) {
+					if (i > 1)
+						System.out.print("\t");
+					String columnValue = rs.getString(i);
+					if (columnValue != null && !columnValue.isEmpty()) {
+						System.out.print(columnValue);
+					} else {
+						System.out.print("");
+					}
+				}
+				System.out.println("");
+			}
+		} catch (SQLException e) {
+			System.out.println("Error executing printing Result Set.");
+			e.printStackTrace();
+		}
+	}
+}
